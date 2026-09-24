@@ -11,6 +11,7 @@ from typing import Any, Mapping
 from urllib.parse import parse_qs, urlparse
 
 from .errors import SupplyError, ValidationFailed
+from .evidence import EvidenceService, ROOT_KINDS, verify_bundle
 from .service import SupplyService
 from .storage import connect
 
@@ -22,8 +23,9 @@ class Response:
 
 
 class JsonApplication:
-    def __init__(self, service: SupplyService) -> None:
+    def __init__(self, service: SupplyService, evidence: EvidenceService | None = None) -> None:
         self.service = service
+        self.evidence = evidence or EvidenceService(service.connection, service.clock)
 
     @staticmethod
     def _actor(headers: Mapping[str, str]) -> str:
@@ -31,6 +33,27 @@ class JsonApplication:
         if not actor:
             raise ValidationFailed("缺少 X-Actor-Id")
         return actor
+
+    @staticmethod
+    def _root_ref(payload: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+        root_kind = str(payload.get("root_kind", "")).strip()
+        if root_kind not in ROOT_KINDS:
+            raise ValidationFailed("root_kind 必须是 allocation、transfer 或 scenario_run")
+        root = payload.get("root") if isinstance(payload.get("root"), Mapping) else payload
+        if root_kind == "allocation":
+            try:
+                return root_kind, {"allocation_id": int(root["allocation_id"])}
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValidationFailed("必须提供整数 allocation_id") from exc
+        if root_kind == "transfer":
+            transfer_id = str(root.get("transfer_id", "")).strip()
+            if not transfer_id:
+                raise ValidationFailed("必须提供 transfer_id")
+            return root_kind, {"transfer_id": transfer_id}
+        try:
+            return root_kind, {"run_id": int(root["run_id"])}
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValidationFailed("必须提供整数 run_id") from exc
 
     @staticmethod
     def _json(body: bytes) -> dict[str, Any]:
@@ -85,6 +108,26 @@ class JsonApplication:
                 return Response(200, self.service.run_scenario(actor, parts[1], payload["as_of_date"]))
             if method == "GET" and path == "/audit/chain":
                 return Response(200, self.service.audit_chain(actor))
+            if method == "POST" and path == "/evidence/packages":
+                root_kind, root_ref = self._root_ref(payload)
+                job = self.evidence.request_package(actor, root_kind, root_ref)
+                if not job.get("reused"):
+                    self.evidence.start_background(job["job_id"])
+                return Response(202, job)
+            if method == "POST" and len(parts) == 4 and parts[0] == "evidence" and parts[2] == "run":
+                self.evidence.require_audit(actor)
+                return Response(200, self.evidence.advance_job(parts[1]))
+            if method == "GET" and len(parts) == 3 and parts[0] == "evidence" and parts[1] == "jobs":
+                self.evidence.require_audit(actor)
+                return Response(200, self.evidence.get_job(parts[2]))
+            if method == "GET" and len(parts) == 4 and parts[0] == "evidence" and parts[1] == "jobs" and parts[3] == "package":
+                self.evidence.require_audit(actor)
+                return Response(200, self.evidence.export_bundle(parts[2]))
+            if method == "POST" and path == "/evidence/verify":
+                self.evidence.require_audit(actor)
+                bundle = payload.get("bundle", payload)
+                cross = self.service.connection if payload.get("cross_check_database") else None
+                return Response(200, verify_bundle(bundle, cross))
             return Response(404, {"error": {"code": "route_not_found", "message": "接口不存在"}})
         except SupplyError as exc:
             return Response(exc.status, {"error": {"code": exc.code, "message": str(exc)}})

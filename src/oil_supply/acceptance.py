@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .clock import FrozenClock
+from .evidence import EvidenceService, verify_bundle
 from .service import SupplyService
 
 
@@ -30,7 +31,26 @@ def run(workspace: Path) -> dict[str, object]:
     service.create_scenario("plan", {"scenario_id": "pipeline-restart", "name": "关键管道恢复与需求回落", "price_index_drop_percent": "9", "route_capacity_changes": {"pipe-a-b": "20"}, "demand_changes": {"field-a:crude": "-5"}})
     service.approve_scenario("risk", "pipeline-restart", 1)
     scenario = service.run_scenario("plan", "pipeline-restart", "2026-09-23")
-    result = {"status": "ok", "price": service.price_summary("BRENT"), "allocation_id": allocation["allocation_id"], "transfer": transfer, "scenario_run_id": scenario["run_id"], "audit": service.audit_chain("audit"), "workspace": workspace.name}
+    evidence_service = EvidenceService(connection, service.clock)
+    evidence_job = evidence_service.request_package("audit", "transfer", {"transfer_id": transfer["transfer_id"]})
+    evidence_service.advance_job(evidence_job["job_id"])
+    evidence_bundle = evidence_service.export_bundle(evidence_job["job_id"])
+    evidence_report = verify_bundle(evidence_bundle, connection)
+    result = {
+        "status": "ok",
+        "price": service.price_summary("BRENT"),
+        "allocation_id": allocation["allocation_id"],
+        "transfer": transfer,
+        "scenario_run_id": scenario["run_id"],
+        "audit": service.audit_chain("audit"),
+        "evidence": {
+            "job_id": evidence_job["job_id"],
+            "item_count": evidence_bundle["manifest"]["item_count"],
+            "package_sha256": evidence_bundle["manifest"]["package_sha256"],
+            "valid": evidence_report["valid"],
+        },
+        "workspace": workspace.name,
+    }
     connection.close()
     return result
 

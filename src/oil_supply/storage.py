@@ -194,11 +194,49 @@ CREATE TABLE IF NOT EXISTS supply_audit_events (
 
 CREATE INDEX IF NOT EXISTS idx_supply_audit_entity
 ON supply_audit_events(entity_type, entity_id, event_id);
+
+CREATE TABLE IF NOT EXISTS evidence_jobs (
+    job_id TEXT PRIMARY KEY,
+    root_kind TEXT NOT NULL CHECK(root_kind IN ('allocation','transfer','scenario_run')),
+    root_ref TEXT NOT NULL,
+    cutoff_event_id INTEGER NOT NULL,
+    cutoff_head_hash TEXT NOT NULL,
+    cutoff_at TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('pending','collecting','ready','failed')),
+    manifest_json TEXT,
+    package_json TEXT,
+    package_sha256 TEXT,
+    error_text TEXT,
+    created_by TEXT NOT NULL REFERENCES supply_users(user_id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(root_kind, root_ref)
+);
+
+CREATE TABLE IF NOT EXISTS evidence_items (
+    job_id TEXT NOT NULL REFERENCES evidence_jobs(job_id),
+    item_id TEXT NOT NULL,
+    item_kind TEXT NOT NULL,
+    ref_json TEXT NOT NULL,
+    anchor_at TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','collected','missing','error')),
+    detail_text TEXT,
+    content_json TEXT,
+    item_sha256 TEXT,
+    evidence_event_ids_json TEXT NOT NULL DEFAULT '[]',
+    ordinal INTEGER NOT NULL,
+    PRIMARY KEY(job_id, item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_evidence_items_status
+ON evidence_items(job_id, status, ordinal);
 """
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(str(path), isolation_level=None, timeout=10)
+    connection = sqlite3.connect(
+        str(path), isolation_level=None, timeout=10, check_same_thread=False
+    )
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys=ON")
     connection.execute("PRAGMA journal_mode=WAL")
