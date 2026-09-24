@@ -11,6 +11,7 @@ from typing import Any, Iterable, Mapping
 
 from .clock import SystemClock, parse_utc, utc_text
 from .errors import Conflict, Forbidden, InvalidState, NotFound, ValidationFailed
+from . import evidence
 from .models import IndexQuote, Facility, InventoryLot, NominationRequest, Route, SupplyScenario
 from .planning import (
     AllocationRequest,
@@ -34,7 +35,7 @@ ROLE_PERMISSIONS = {
     "planner": {"quote.write", "catalog.write", "scenario.write", "scenario.run"},
     "dispatcher": {"nomination.write", "allocation.run", "transfer.write", "inventory.write"},
     "risk": {"outage.write", "scenario.approve", "report.read"},
-    "auditor": {"report.read", "audit.read"},
+    "auditor": {"report.read", "audit.read", "evidence.create", "evidence.read", "evidence.verify"},
 }
 
 
@@ -569,3 +570,24 @@ class SupplyService:
                 break
             previous_hash = row["event_hash"]
         return {"valid": valid, "events": len(rows), "head_hash": previous_hash}
+
+    def request_evidence_task(self, actor_id: str, root_type: str, root_id: object) -> dict[str, Any]:
+        user = self._require(actor_id, "evidence.create")
+        redaction = "unmasked" if "evidence.pii" in ROLE_PERMISSIONS[user["role"]] else "masked"
+        return evidence.create_task(self.connection, self.clock, actor_id, root_type, root_id, redaction)
+
+    def evidence_task(self, actor_id: str, task_id: str) -> dict[str, Any]:
+        self._require(actor_id, "evidence.read")
+        return evidence.task_status(self.connection, task_id)
+
+    def run_evidence_task(self, actor_id: str, task_id: str, max_steps: int | None = None) -> dict[str, Any]:
+        self._require(actor_id, "evidence.create")
+        return evidence.run_task(self.connection, self.clock, task_id, max_steps=max_steps)
+
+    def evidence_package(self, actor_id: str, task_id: str) -> dict[str, Any]:
+        self._require(actor_id, "evidence.read")
+        return evidence.export_package(self.connection, task_id)
+
+    def verify_evidence_package(self, actor_id: str, package: Any) -> dict[str, Any]:
+        self._require(actor_id, "evidence.verify")
+        return evidence.verify_package(self.connection, package)

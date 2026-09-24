@@ -194,11 +194,38 @@ CREATE TABLE IF NOT EXISTS supply_audit_events (
 
 CREATE INDEX IF NOT EXISTS idx_supply_audit_entity
 ON supply_audit_events(entity_type, entity_id, event_id);
+
+CREATE TABLE IF NOT EXISTS evidence_tasks (
+    task_id TEXT PRIMARY KEY,
+    root_type TEXT NOT NULL CHECK(root_type IN ('allocation','transfer','scenario_run')),
+    root_id TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','running','completed','failed')),
+    cursor INTEGER NOT NULL DEFAULT 0,
+    snapshot_json TEXT NOT NULL,
+    redaction TEXT NOT NULL DEFAULT 'masked' CHECK(redaction IN ('masked','unmasked')),
+    requested_by TEXT NOT NULL REFERENCES supply_users(user_id),
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    error TEXT,
+    manifest_json TEXT,
+    package_sha256 TEXT,
+    UNIQUE(root_type, root_id)
+);
+
+CREATE TABLE IF NOT EXISTS evidence_items (
+    task_id TEXT NOT NULL REFERENCES evidence_tasks(task_id),
+    item_key TEXT NOT NULL,
+    item_type TEXT NOT NULL,
+    content_json TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    PRIMARY KEY(task_id, item_key)
+);
 """
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(str(path), isolation_level=None, timeout=10)
+    connection = sqlite3.connect(str(path), isolation_level=None, timeout=10, check_same_thread=False)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys=ON")
     connection.execute("PRAGMA journal_mode=WAL")

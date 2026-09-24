@@ -30,7 +30,11 @@ def run(workspace: Path) -> dict[str, object]:
     service.create_scenario("plan", {"scenario_id": "pipeline-restart", "name": "关键管道恢复与需求回落", "price_index_drop_percent": "9", "route_capacity_changes": {"pipe-a-b": "20"}, "demand_changes": {"field-a:crude": "-5"}})
     service.approve_scenario("risk", "pipeline-restart", 1)
     scenario = service.run_scenario("plan", "pipeline-restart", "2026-09-23")
-    result = {"status": "ok", "price": service.price_summary("BRENT"), "allocation_id": allocation["allocation_id"], "transfer": transfer, "scenario_run_id": scenario["run_id"], "audit": service.audit_chain("audit"), "workspace": workspace.name}
+    task = service.request_evidence_task("audit", "allocation", allocation["allocation_id"])
+    service.run_evidence_task("audit", task["task_id"])
+    package = service.evidence_package("audit", task["task_id"])
+    verification = service.verify_evidence_package("audit", package)
+    result = {"status": "ok", "price": service.price_summary("BRENT"), "allocation_id": allocation["allocation_id"], "transfer": transfer, "scenario_run_id": scenario["run_id"], "audit": service.audit_chain("audit"), "evidence": {"task_id": task["task_id"], "package_sha256": package["package_sha256"], "valid": verification["valid"]}, "workspace": workspace.name}
     connection.close()
     return result
 

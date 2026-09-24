@@ -85,6 +85,18 @@ class JsonApplication:
                 return Response(200, self.service.run_scenario(actor, parts[1], payload["as_of_date"]))
             if method == "GET" and path == "/audit/chain":
                 return Response(200, self.service.audit_chain(actor))
+            if method == "POST" and path == "/evidence/tasks":
+                result = self.service.request_evidence_task(actor, payload["root_type"], payload["root_id"])
+                return Response(200 if result.get("reused") else 201, result)
+            if method == "GET" and len(parts) == 3 and parts[:2] == ["evidence", "tasks"]:
+                return Response(200, self.service.evidence_task(actor, parts[2]))
+            if method == "POST" and len(parts) == 4 and parts[:2] == ["evidence", "tasks"] and parts[3] == "run":
+                max_steps = payload.get("max_steps")
+                return Response(200, self.service.run_evidence_task(actor, parts[2], None if max_steps is None else int(max_steps)))
+            if method == "GET" and len(parts) == 4 and parts[:2] == ["evidence", "tasks"] and parts[3] == "package":
+                return Response(200, self.service.evidence_package(actor, parts[2]))
+            if method == "POST" and path == "/evidence/verify":
+                return Response(200, self.service.verify_evidence_package(actor, payload))
             return Response(404, {"error": {"code": "route_not_found", "message": "接口不存在"}})
         except SupplyError as exc:
             return Response(exc.status, {"error": {"code": exc.code, "message": str(exc)}})
